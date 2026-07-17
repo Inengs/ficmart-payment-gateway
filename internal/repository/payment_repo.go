@@ -1,3 +1,4 @@
+// SQL queries (CREATE, UPDATE, GET)
 package repository
 
 import (

@@ -1,3 +1,4 @@
+// Payment struct, status constants, error types
 package domain
 
 import "time"

@@ -1,3 +1,4 @@
+// database connection
 package internal
 
 import (

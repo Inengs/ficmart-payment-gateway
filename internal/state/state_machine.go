@@ -1,3 +1,4 @@
+// valid transition rules
 package state
 
 import (
