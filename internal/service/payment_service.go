@@ -2,7 +2,10 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"log"
+	"math/rand"
 	"time"
 
 	"github.com/Inengs/ficmart-payment-gateway/internal/client"
@@ -34,13 +37,14 @@ type AuthorizeRequest struct {
 	ExpiryYear  int    `json:"expiry_year"`
 }
 
-func (s *PaymentService) Authorize(req *AuthorizeRequest) (*domain.Payment, error) {
+func (s *PaymentService) Authorize(ctx context.Context, req *AuthorizeRequest) (*domain.Payment, error) {
 	// Guard before slicing. len(CardNumber)-4 panics on anything shorter
 	// than four characters, taking down the handler with it.
 	if len(req.CardNumber) < 4 {
 		return nil, errors.New("card number too short")
 	}
 
+	now := time.Now()
 	payment := &domain.Payment{
 		ID:           uuid.New().String(),
 		OrderID:      req.OrderID,
@@ -49,8 +53,8 @@ func (s *PaymentService) Authorize(req *AuthorizeRequest) (*domain.Payment, erro
 		Currency:     req.Currency,
 		CardLastFour: req.CardNumber[len(req.CardNumber)-4:],
 		Status:       domain.StatusPending,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	// PERSIST BEFORE CALLING THE BANK. If we crash after the bank
@@ -64,7 +68,7 @@ func (s *PaymentService) Authorize(req *AuthorizeRequest) (*domain.Payment, erro
 	// The payment ID is the idempotency key sent to the bank. It's already
 	// unique per attempt, so a retry of this same authorization reaches
 	// the bank with the same key and cannot double-charge.
-	bankResp, err := s.bank.Authorize(&client.AuthorizeRequest{
+	bankResp, err := s.authorizeWithRetry(ctx, &client.AuthorizeRequest{
 		Amount:      req.Amount,
 		CardNumber:  req.CardNumber,
 		CVV:         req.CVV,
@@ -72,8 +76,15 @@ func (s *PaymentService) Authorize(req *AuthorizeRequest) (*domain.Payment, erro
 		ExpiryYear:  req.ExpiryYear,
 	}, payment.ID)
 	if err != nil {
-		// Left PENDING deliberately. We don't know whether the bank
-		// authorized — reconciliation decides, not a guess here.
+		var appErr *domain.AppError
+		if errors.As(err, &appErr) && isPermanent(appErr.Code) {
+			if transition_error := state.Transition(payment.Status, domain.StatusFailed); transition_error == nil {
+				if merr := s.repo.MarkFailed(payment.ID, string(appErr.Code), time.Now()); merr != nil {
+					log.Printf("failed to mark payment %s FAILED: %v", payment.ID, merr)
+				}
+			}
+		}
+		// transient (BANK_UNAVAILABLE) and INTERNAL_ERROR stay PENDING for the reconciler
 		return nil, err
 	}
 
@@ -90,8 +101,61 @@ func (s *PaymentService) Authorize(req *AuthorizeRequest) (*domain.Payment, erro
 	}
 
 	payment.Status = domain.StatusAuthorized
-	payment.BankAuthID = bankResp.AuthorizationID
-	payment.AuthorizedAt = authorizedAt
+	payment.BankAuthID = &bankResp.AuthorizationID
+	payment.AuthorizedAt = &authorizedAt
 
 	return payment, nil
+}
+
+// Backoff and retry for transient failures. The bank is a separate system
+// and can be down or slow. We don't want to fail the payment if the bank
+// is just having a bad moment, so we retry a few times with exponential
+// backoff. The bank client already returns an error for 5xx responses,
+// so we don't have to check the status code here. This is the backoff with jitter pattern recommended by AWS: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+func (s *PaymentService) authorizeWithRetry(ctx context.Context, req *client.AuthorizeRequest, key string) (*client.AuthorizeResponse, error) {
+	const maxAttempts = 3
+	backoff := 200 * time.Millisecond
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		resp, err := s.bank.Authorize(ctx, req, key) // key should be unique per request
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		// only transient failures should be retried, not permanent ones like card declined or expired
+		var appErr *domain.AppError
+		if !errors.As(err, &appErr) || appErr.Code != domain.ErrBankUnavailable {
+			return nil, err
+		}
+
+		// caller is gone, so stop retrying
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		// backoff with jitter; wakes early if the context is cancelled
+		wait := backoff + time.Duration(rand.Int63n(int64(backoff)))
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		backoff *= 2
+	}
+	return nil, lastErr
+}
+
+func isPermanent(code domain.ErrorCode) bool {
+	switch code {
+	case domain.ErrCardDeclined, domain.ErrCardExpired,
+		domain.ErrInsufficientFunds, domain.ErrValidation:
+		return true
+	}
+	return false
 }

@@ -3,10 +3,14 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
+
+	"github.com/Inengs/ficmart-payment-gateway/internal/domain"
 )
 
 type BankClient struct {
@@ -16,7 +20,7 @@ type BankClient struct {
 
 func NewBankClient(baseURL string) *BankClient {
 	return &BankClient{
-		baseURL: baseURL,
+		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -39,7 +43,38 @@ type AuthorizeResponse struct {
 	ExpiresAt       string `json:"expires_at"`
 }
 
-func (b *BankClient) Authorize(req *AuthorizeRequest, idempotencyKey string) (*AuthorizeResponse, error) {
+type bankErrorBody struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+func mapBankError(status int, body []byte) error {
+	var be bankErrorBody
+	if err := json.Unmarshal(body, &be); err != nil {
+		be = bankErrorBody{} // body wasn't JSON, fall back to status only
+	}
+	raw := fmt.Errorf("bank returned %d: error=%q message=%q", status, be.Error, be.Message)
+
+	if status >= 500 {
+		return domain.WrapAppError(domain.ErrBankUnavailable, "bank is unavailable", raw)
+	}
+
+	switch be.Error {
+	case "insufficient_funds":
+		return domain.WrapAppError(domain.ErrInsufficientFunds, "insufficient funds", raw)
+	case "card_expired":
+		return domain.WrapAppError(domain.ErrCardExpired, "card has expired", raw)
+	case "invalid_cvv", "invalid_card":
+		return domain.WrapAppError(domain.ErrCardDeclined, "card details are invalid", raw)
+	case "invalid_amount":
+		return domain.WrapAppError(domain.ErrValidation, "invalid amount", raw)
+	default:
+		// unknown 4xx or non-JSON body: likely our bug, so log it and don't blame the card
+		return domain.WrapAppError(domain.ErrInternal, "unexpected bank response", raw)
+	}
+}
+
+func (b *BankClient) Authorize(ctx context.Context, req *AuthorizeRequest, idempotencyKey string) (*AuthorizeResponse, error) {
 	// 1. Marshal request body to JSON
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -47,7 +82,7 @@ func (b *BankClient) Authorize(req *AuthorizeRequest, idempotencyKey string) (*A
 	}
 
 	// 2. Create the request
-	httpReq, err := http.NewRequest("POST", b.baseURL+"/api/v1/authorizations", bytes.NewBuffer(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.baseURL+"/api/v1/authorizations", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
@@ -59,29 +94,29 @@ func (b *BankClient) Authorize(req *AuthorizeRequest, idempotencyKey string) (*A
 	// 4. Send it
 	resp, err := b.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, domain.WrapAppError(domain.ErrBankUnavailable, "bank is unavailable", err)
 	}
 
 	// Leaking this holds the connection open and exhausts the pool.
 	defer resp.Body.Close()
 
+	// read the body once; it's a stream and can't be read twice
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, domain.WrapAppError(domain.ErrBankUnavailable, "failed to read bank response", err)
+	}
+
 	// STATUS CODE FIRST. Decoding a 500 into AuthorizeResponse succeeds
 	// with every field empty — the call looks like it worked and the
 	// authorization ID is silently "".
-	if resp.StatusCode >= 500 {
-		return nil, fmt.Errorf("bank unavailable: status %d", resp.StatusCode)
-	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("bank rejected request: status %d", resp.StatusCode)
+		return nil, mapBankError(resp.StatusCode, respBody)
 	}
 
 	// convert *http.Response to *AuthorizeResponse
 	var authorizeResp AuthorizeResponse
-	err = json.NewDecoder(resp.Body).Decode(&authorizeResp)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode bank response: %w", err)
+	if err := json.Unmarshal(respBody, &authorizeResp); err != nil {
+		return nil, domain.WrapAppError(domain.ErrBankUnavailable, "invalid bank response", err)
 	}
-
 	return &authorizeResp, nil
 }

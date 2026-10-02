@@ -242,7 +242,7 @@ components:
 
     PaymentStatus:
       type: string
-      enum: [PENDING, AUTHORIZED, CAPTURED, VOIDED, REFUNDED]
+      enum: [PENDING, AUTHORIZED, CAPTURED, VOIDED, REFUNDED, FAILED]
 
     AuthorizeRequest:
       type: object
@@ -337,6 +337,13 @@ components:
         updated_at:
           type: string
           format: date-time
+        failure_reason:
+          type: string
+          nullable: true
+        failed_at:
+          type: string
+          format: date-time
+          nullable: true
 
     PaymentList:
       type: array

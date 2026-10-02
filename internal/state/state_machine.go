@@ -8,9 +8,9 @@ import (
 )
 
 var validTransitions = map[domain.PaymentStatus][]domain.PaymentStatus{
-    domain.StatusPending:    {domain.StatusAuthorized},
-    domain.StatusAuthorized: {domain.StatusCaptured, domain.StatusVoided},
-    domain.StatusCaptured:   {domain.StatusRefunded},
+	domain.StatusPending:    {domain.StatusAuthorized, domain.StatusFailed},
+	domain.StatusAuthorized: {domain.StatusCaptured, domain.StatusVoided},
+	domain.StatusCaptured:   {domain.StatusRefunded},
 }
 
 func Transition(current, next domain.PaymentStatus) error {

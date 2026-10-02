@@ -52,3 +52,23 @@ func (r *PaymentRepository) MarkAuthorized(paymentID, bankAuthID string, authori
 
 	return nil
 }
+
+
+func (r *PaymentRepository) MarkFailed(paymentID, reason string, failedAt time.Time) error {
+	res, err := r.db.Exec(`
+		UPDATE payments
+		SET status = $1, failure_reason = $2, failed_at = $3, updated_at = $4
+		WHERE id = $5 AND status = $6`,
+		domain.StatusFailed, reason, failedAt, time.Now(), paymentID, domain.StatusPending)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errors.New("payment not in PENDING state")
+	}
+	return nil
+}
