@@ -37,7 +37,7 @@ type AuthorizeRequest struct {
 	ExpiryYear  int    `json:"expiry_year"`
 }
 
-func (s *PaymentService) Authorize(ctx context.Context, req *AuthorizeRequest) (*domain.Payment, error) {
+func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, req *AuthorizeRequest) (*domain.Payment, error) {
 	// Guard before slicing. len(CardNumber)-4 panics on anything shorter
 	// than four characters, taking down the handler with it.
 	if len(req.CardNumber) < 4 {
@@ -65,6 +65,7 @@ func (s *PaymentService) Authorize(ctx context.Context, req *AuthorizeRequest) (
 		return nil, err
 	}
 
+	bankKey := "authorize:" + idempotencyKey
 	// The payment ID is the idempotency key sent to the bank. It's already
 	// unique per attempt, so a retry of this same authorization reaches
 	// the bank with the same key and cannot double-charge.
@@ -74,7 +75,7 @@ func (s *PaymentService) Authorize(ctx context.Context, req *AuthorizeRequest) (
 		CVV:         req.CVV,
 		ExpiryMonth: req.ExpiryMonth,
 		ExpiryYear:  req.ExpiryYear,
-	}, payment.ID)
+	}, bankKey)
 	if err != nil {
 		var appErr *domain.AppError
 		if errors.As(err, &appErr) && isPermanent(appErr.Code) {

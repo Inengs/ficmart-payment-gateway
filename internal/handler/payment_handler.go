@@ -23,11 +23,7 @@ func NewPaymentHandler(service *service.PaymentService) *PaymentHandler {
 }
 
 func (h *PaymentHandler) Authorize(c *gin.Context) {
-	key, err := idempotencyKey(c)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
+	key := c.GetString("idempotency_key")
 
 	// Parse JSON
 	var req service.AuthorizeRequest
@@ -41,9 +37,9 @@ func (h *PaymentHandler) Authorize(c *gin.Context) {
 	}
 
 	// call authorize service
-	payment, err := h.service.Authorize(c.Request.Context(), &req)
+	payment, err := h.service.Authorize(c.Request.Context(), key, &req) // call the service layer to authorize the payment
 	if err != nil {
-		respondError(c, err)
+		respondError(c, err) // respond with appropriate error based on the type of error returned by the service layer
 		return
 	}
 
@@ -147,16 +143,4 @@ func respondError(c *gin.Context, err error) {
 	}
 	log.Printf("unexpected error: %v", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"code": domain.ErrInternal, "message": "internal error"})
-}
-
-
-func idempotencyKey(c *gin.Context) (string, error) {
-	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
-	if key == "" {
-		return "", domain.NewAppError(domain.ErrValidation, "Idempotency-Key header is required")
-	}
-	if len(key) > 255 {
-		return "", domain.NewAppError(domain.ErrValidation, "Idempotency-Key must be at most 255 characters")
-	}
-	return key, nil
 }

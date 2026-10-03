@@ -9,6 +9,7 @@ import (
 	"github.com/Inengs/ficmart-payment-gateway/internal/client"
 	db "github.com/Inengs/ficmart-payment-gateway/internal/db"
 	"github.com/Inengs/ficmart-payment-gateway/internal/handler"
+	"github.com/Inengs/ficmart-payment-gateway/internal/middleware"
 	"github.com/Inengs/ficmart-payment-gateway/internal/repository"
 	"github.com/Inengs/ficmart-payment-gateway/internal/service"
 	"github.com/Inengs/ficmart-payment-gateway/pkg/logger"
@@ -28,6 +29,7 @@ func main() {
 
 	bankClient := client.NewBankClient(cfg.BankBaseURL)
 	repo := repository.NewPaymentRepository(conn)
+	idemRepo := repository.NewIdempotencyRepository(conn)
 	svc := service.NewPaymentService(repo, bankClient)
 	h := handler.NewPaymentHandler(svc)
 
@@ -35,7 +37,7 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "Hello world"})
 	})
-	r.POST("/payments/authorize", h.Authorize)
+	r.POST("/payments/authorize", middleware.Idempotency(idemRepo), h.Authorize)
 
 	logger.Logger.Info("server starting", "port", cfg.Port)
 	r.Run(":" + cfg.Port)
