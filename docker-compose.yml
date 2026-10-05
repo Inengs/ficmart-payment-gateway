@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d payment_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    container_name: postgres_container
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway 
+      postgres_db: payment_gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  migrations:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: payment_gateway
+    volumes:
+      - ./migrations:/migrations:ro
+    container_name: migrations_container
+    entrypoint: > 
+      sh -c "
+          echo 'Waiting for Postgres...'
+          until pg_isready -h postgres -U gateway -d payment_gateway; do sleep 1; done
+          echo 'Enabling pgcrypto (gen_random_uuid)...'
+          psql -h postgres -U gateway -d payment_gateway -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+          echo 'Running migrations...'
+          for f in $$(ls /migrations/*.up.sql | sort); do
+            echo \"Applying $$f\"
+            psql -h postgres -U gateway -d payment_gateway -v ON_ERROR_STOP=1 -f \"$$f\"
+          done
+          echo 'Migrations complete.'
+        "
+      restart: "no"
+
+  payment_gateway:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    container_name: payment_gateway_container
+    environment:
+      DATABASE_URL: postgres://gateway:gateway@postgres:5432/payment_gateway
+      PORT: "8080"
+      BANK_BASE_URL: ${BANK_BASE_URL:-http://host.docker.internal:9000}
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+
+volumes:
+  postgres_data:  

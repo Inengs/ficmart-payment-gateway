@@ -1,1 +1,0 @@
-ALTER TABLE payments DROP COLUMN failure_reason, DROP COLUMN failed_at;
