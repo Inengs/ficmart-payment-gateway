@@ -26,6 +26,7 @@ services:
       POSTGRES_USER: gateway
       POSTGRES_PASSWORD: gateway
       POSTGRES_DB: payment_gateway
+      PGPASSWORD: gateway
     volumes:
       - ./migrations:/migrations:ro
     container_name: migrations_container
