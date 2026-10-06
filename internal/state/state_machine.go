@@ -2,7 +2,7 @@
 package state
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/Inengs/ficmart-payment-gateway/internal/domain"
 )
@@ -17,7 +17,7 @@ func Transition(current, next domain.PaymentStatus) error {
 	allowed, ok := validTransitions[current] // allowed = value stored in the map, ok (bool) = tells whether it was found
 
 	if !ok {
-		return errors.New("unknown state")
+		return domain.NewAppError(domain.ErrInvalidStateTransition, fmt.Sprintf("cannot move from %s to %s", current, next))
 	}
 
 	for _, s := range allowed {
@@ -26,5 +26,5 @@ func Transition(current, next domain.PaymentStatus) error {
 		}
 	}
 
-	return errors.New("invalid transaction")
+	return domain.NewAppError(domain.ErrBankUnavailable, fmt.Sprintf("cannot move from %s to %s", current, next))
 }

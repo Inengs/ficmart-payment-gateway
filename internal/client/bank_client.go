@@ -43,6 +43,16 @@ type AuthorizeResponse struct {
 	ExpiresAt       string `json:"expires_at"`
 }
 
+type CaptureRequest struct {
+	AuthorizationID string `json:"authorization_id"`
+	Amount          int    `json:"amount"`
+}
+
+type CaptureResponse struct {
+	CaptureID string `json:"capture_id"`
+	Status    string `json:"status"`
+}
+
 type bankErrorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
@@ -72,6 +82,40 @@ func mapBankError(status int, body []byte) error {
 		// unknown 4xx or non-JSON body: likely our bug, so log it and don't blame the card
 		return domain.WrapAppError(domain.ErrInternal, "unexpected bank response", raw)
 	}
+}
+
+// post helper
+func (b *BankClient) post(ctx context.Context, path, idempotencyKey string, in, out any) error {
+	body, err := json.Marshal(in) // marshal the request body to JSON
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err) // return an error if marshalling fails
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+path, bytes.NewReader(body)) // create a new HTTP POST request with the given context, path, and request body
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err) // return an error if request creation fails
+	}
+	req.Header.Set("Content-Type", "application/json") // set the Content-Type header to application/json
+	req.Header.Set("Idempotency-Key", idempotencyKey)  // set the Idempotency-Key header
+
+	resp, err := b.httpClient.Do(req) // send the HTTP request using the httpClient
+	if err != nil {
+		domain.WrapAppError(domain.ErrBankUnavailable, "bank is unavailable", err) // wrap and return an error if the request fails
+	}
+
+	defer resp.Body.Close() // ensure the response body is closed after reading
+
+	respBody, err := io.ReadAll(resp.Body) // read the response body
+	if err != nil {
+		return domain.WrapAppError(domain.ErrBankUnavailable, "failed to read bank response", err) // wrap and return an error if reading the response fails
+	}
+	if resp.StatusCode >= 400 { // check if the response status code indicates an error
+		return mapBankError(resp.StatusCode, respBody) // map and return the bank error
+	}
+	if err := json.Unmarshal(respBody, out); err != nil { // unmarshal the response body into the output parameter
+		return domain.WrapAppError(domain.ErrBankUnavailable, "invalid bank response", err) // wrap and return an error if unmarshalling fails
+	}
+	return nil // return nil if everything succeeds
 }
 
 func (b *BankClient) Authorize(ctx context.Context, req *AuthorizeRequest, idempotencyKey string) (*AuthorizeResponse, error) {
@@ -119,4 +163,12 @@ func (b *BankClient) Authorize(ctx context.Context, req *AuthorizeRequest, idemp
 		return nil, domain.WrapAppError(domain.ErrBankUnavailable, "invalid bank response", err)
 	}
 	return &authorizeResp, nil
+}
+
+func (b *BankClient) Capture(ctx context.Context, req *CaptureRequest, idempotencyKey string) (*CaptureResponse, error) {
+	var out CaptureResponse
+	if err := b.post(ctx, "/api/v1/captures", idempotencyKey, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
