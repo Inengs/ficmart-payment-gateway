@@ -1,0 +1,27 @@
+$kind: http-request
+url: "{{base_url}}/payments/authorize"
+method: POST
+headers:
+  Content-Type: application/json
+  Idempotency-Key: "{{idem_key}}"
+body:
+  type: text
+  content: '{"order_id":"{{order_id}}","customer_id":"c1","amount":5000,"currency":"USD","card_number":"4111111111111111","cvv":"123","expiry_month":12,"expiry_year":2030}'
+scripts:
+  - type: beforeRequest
+    code: |-
+      const run = Date.now();
+      pm.collectionVariables.set('idem_key', 'auth-' + run);
+      pm.collectionVariables.set('capture_key', 'cap-' + run);
+      pm.collectionVariables.set('order_id', 'order-' + run);
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('200 AUTHORIZED', () => {
+        pm.response.to.have.status(200);
+        const b = pm.response.json();
+        pm.expect(b.status).to.eql('AUTHORIZED');
+        pm.collectionVariables.set('payment_id', b.payment_id);
+      });
+    language: text/javascript
+order: 1000

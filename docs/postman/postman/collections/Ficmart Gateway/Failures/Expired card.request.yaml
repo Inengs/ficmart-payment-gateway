@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{base_url}}/payments/authorize"
+method: POST
+headers:
+  Content-Type: application/json
+  Idempotency-Key: f-exp-{{ts}}
+body:
+  type: text
+  content: '{"order_id":"f-exp-{{ts}}","customer_id":"c1","amount":5000,"currency":"USD","card_number":"5105105105105100","cvv":"321","expiry_month":3,"expiry_year":2020}'
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('402 CARD_EXPIRED', () => {
+        pm.response.to.have.status(402);
+        pm.expect(pm.response.json().code).to.eql('CARD_EXPIRED');
+      });
+    language: text/javascript
+order: 3000

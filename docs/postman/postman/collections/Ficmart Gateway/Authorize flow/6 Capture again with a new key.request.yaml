@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/payments/{{payment_id}}/capture"
+method: POST
+headers:
+  Idempotency-Key: second-{{capture_key}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('409 INVALID_STATE_TRANSITION', () => {
+        pm.response.to.have.status(409);
+        pm.expect(pm.response.json().code).to.eql('INVALID_STATE_TRANSITION');
+      });
+    language: text/javascript
+order: 6000

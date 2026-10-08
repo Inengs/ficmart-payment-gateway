@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{base_url}}/payments/authorize"
+method: POST
+headers:
+  Content-Type: application/json
+  Idempotency-Key: f-month-{{ts}}
+body:
+  type: text
+  content: '{"order_id":"f-month-{{ts}}","customer_id":"c1","amount":5000,"currency":"USD","card_number":"4111111111111111","cvv":"123","expiry_month":13,"expiry_year":2030}'
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('400 VALIDATION_ERROR', () => {
+        pm.response.to.have.status(400);
+        pm.expect(pm.response.json().code).to.eql('VALIDATION_ERROR');
+      });
+    language: text/javascript
+order: 4000

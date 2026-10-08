@@ -53,6 +53,16 @@ func (h *PaymentHandler) Authorize(c *gin.Context) {
 	})
 }
 
+func (h *PaymentHandler) Capture(c *gin.Context) {
+	key := c.GetString("idempotency_key")
+	payment, err := h.service.Capture(c.Request.Context(), key, c.Param("id"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, payment)
+}
+
 func validateAuthorize(req *service.AuthorizeRequest) error {
 	req.OrderID = strings.TrimSpace(req.OrderID)
 	req.CustomerID = strings.TrimSpace(req.CustomerID)

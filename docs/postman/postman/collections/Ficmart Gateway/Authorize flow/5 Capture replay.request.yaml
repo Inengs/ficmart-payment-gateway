@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/payments/{{payment_id}}/capture"
+method: POST
+headers:
+  Idempotency-Key: "{{capture_key}}"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('replayed with 200', () => {
+        pm.response.to.have.status(200);
+        pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');
+      });
+    language: text/javascript
+order: 5000

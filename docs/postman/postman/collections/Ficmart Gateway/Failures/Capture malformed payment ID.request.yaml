@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/payments/abc/capture"
+method: POST
+headers:
+  Idempotency-Key: f-cap-bad-{{ts}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('404 PAYMENT_NOT_FOUND', () => {
+        pm.response.to.have.status(404);
+        pm.expect(pm.response.json().code).to.eql('PAYMENT_NOT_FOUND');
+      });
+    language: text/javascript
+order: 9000

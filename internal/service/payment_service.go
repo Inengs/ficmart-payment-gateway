@@ -38,10 +38,9 @@ type AuthorizeRequest struct {
 }
 
 func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, req *AuthorizeRequest) (*domain.Payment, error) {
-	// Guard before slicing. len(CardNumber)-4 panics on anything shorter
-	// than four characters, taking down the handler with it.
+	// Guard before slicing: len(CardNumber)-4 panics on anything shorter than four characters.
 	if len(req.CardNumber) < 4 {
-		return nil, errors.New("card number too short")
+		return nil, domain.NewAppError(domain.ErrValidation, "card number too short")
 	}
 
 	now := time.Now()
@@ -59,27 +58,32 @@ func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, r
 
 	// PERSIST BEFORE CALLING THE BANK. If we crash after the bank
 	// authorizes but before we write, a PENDING row exists to reconcile
-	// against (§3.4). Calling first would leave money reserved on a card
+	// against. Calling first would leave money reserved on a card
 	// with no record of it anywhere.
 	if err := s.repo.CreatePayment(payment); err != nil {
 		return nil, err
 	}
 
+	// The bank key is derived from the client's Idempotency-Key, so a retry of
+	// the same request (even as a new HTTP request) reaches the bank with the
+	// same key and cannot double-charge.
 	bankKey := "authorize:" + idempotencyKey
-	// The payment ID is the idempotency key sent to the bank. It's already
-	// unique per attempt, so a retry of this same authorization reaches
-	// the bank with the same key and cannot double-charge.
-	bankResp, err := s.authorizeWithRetry(ctx, &client.AuthorizeRequest{
+
+	bankReq := &client.AuthorizeRequest{
 		Amount:      req.Amount,
 		CardNumber:  req.CardNumber,
 		CVV:         req.CVV,
 		ExpiryMonth: req.ExpiryMonth,
 		ExpiryYear:  req.ExpiryYear,
-	}, bankKey)
+	}
+
+	bankResp, err := withRetry(ctx, func() (*client.AuthorizeResponse, error) {
+		return s.bank.Authorize(ctx, bankReq, bankKey)
+	})
 	if err != nil {
 		var appErr *domain.AppError
 		if errors.As(err, &appErr) && isPermanent(appErr.Code) {
-			if transition_error := state.Transition(payment.Status, domain.StatusFailed); transition_error == nil {
+			if terr := state.Transition(payment.Status, domain.StatusFailed); terr == nil {
 				if merr := s.repo.MarkFailed(payment.ID, string(appErr.Code), time.Now()); merr != nil {
 					log.Printf("failed to mark payment %s FAILED: %v", payment.ID, merr)
 				}
@@ -89,9 +93,6 @@ func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, r
 		return nil, err
 	}
 
-	// Checked even though the current state is known, because the rule
-	// belongs in one place. A later capture or void path calls the same
-	// function rather than reimplementing the logic.
 	if err := state.Transition(payment.Status, domain.StatusAuthorized); err != nil {
 		return nil, err
 	}
@@ -108,48 +109,73 @@ func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, r
 	return payment, nil
 }
 
+func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID string) (*domain.Payment, error) {
+	p, err := s.repo.GetPaymentByID(paymentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := state.Transition(p.Status, domain.StatusCaptured); err != nil {
+		return nil, err
+	}
+	if p.BankAuthID == nil {
+		return nil, domain.NewAppError(domain.ErrInternal, "payment has no bank authorization")
+	}
+
+	bankKey := "capture:" + idempotencyKey
+	resp, err := withRetry(ctx, func() (*client.CaptureResponse, error) {
+		return s.bank.Capture(ctx, &client.CaptureRequest{AuthorizationID: *p.BankAuthID, Amount: p.Amount}, bankKey)
+	})
+	if err != nil {
+		return nil, err // payment stays AUTHORIZED; safe to retry with the same key
+	}
+
+	capturedAt := time.Now()
+	if err := s.repo.MarkCaptured(p.ID, resp.CaptureID, capturedAt); err != nil {
+		return nil, err
+	}
+	p.Status = domain.StatusCaptured
+	p.BankCaptureID = &resp.CaptureID
+	p.CapturedAt = &capturedAt
+	return p, nil
+}
+
 // Backoff and retry for transient failures. The bank is a separate system
 // and can be down or slow. We don't want to fail the payment if the bank
 // is just having a bad moment, so we retry a few times with exponential
 // backoff. The bank client already returns an error for 5xx responses,
 // so we don't have to check the status code here. This is the backoff with jitter pattern recommended by AWS: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
-func (s *PaymentService) authorizeWithRetry(ctx context.Context, req *client.AuthorizeRequest, key string) (*client.AuthorizeResponse, error) {
+func withRetry[T any](ctx context.Context, call func() (T, error)) (T, error) {
 	const maxAttempts = 3
 	backoff := 200 * time.Millisecond
+	var zero T
 	var lastErr error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		resp, err := s.bank.Authorize(ctx, req, key) // key should be unique per request
+		resp, err := call()
 		if err == nil {
 			return resp, nil
 		}
 		lastErr = err
 
-		// only transient failures should be retried, not permanent ones like card declined or expired
 		var appErr *domain.AppError
 		if !errors.As(err, &appErr) || appErr.Code != domain.ErrBankUnavailable {
-			return nil, err
+			return zero, err
 		}
-
-		// caller is gone, so stop retrying
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return zero, ctx.Err()
 		}
-
 		if attempt == maxAttempts {
 			break
 		}
-
-		// backoff with jitter; wakes early if the context is cancelled
 		wait := backoff + time.Duration(rand.Int63n(int64(backoff)))
 		select {
 		case <-time.After(wait):
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return zero, ctx.Err()
 		}
 		backoff *= 2
 	}
-	return nil, lastErr
+	return zero, lastErr
 }
 
 func isPermanent(code domain.ErrorCode) bool {

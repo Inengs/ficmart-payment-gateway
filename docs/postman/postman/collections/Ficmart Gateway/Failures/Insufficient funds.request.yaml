@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{base_url}}/payments/authorize"
+method: POST
+headers:
+  Content-Type: application/json
+  Idempotency-Key: f-insuf-{{ts}}
+body:
+  type: text
+  content: '{"order_id":"f-insuf-{{ts}}","customer_id":"c1","amount":5000,"currency":"USD","card_number":"5555555555554444","cvv":"789","expiry_month":9,"expiry_year":2030}'
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('402 INSUFFICIENT_FUNDS', () => {
+        pm.response.to.have.status(402);
+        pm.expect(pm.response.json().code).to.eql('INSUFFICIENT_FUNDS');
+      });
+    language: text/javascript
+order: 1000

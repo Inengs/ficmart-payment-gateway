@@ -1,0 +1,8 @@
+$kind: collection
+description: ""
+variables:
+  base_url: http://localhost:8080
+  idem_key: ""
+  capture_key: ""
+  order_id: ""
+  payment_id: ""

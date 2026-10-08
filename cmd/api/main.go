@@ -38,6 +38,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"message": "Hello world"})
 	})
 	r.POST("/payments/authorize", middleware.Idempotency(idemRepo), h.Authorize)
+	r.POST("/payments/:id/capture", middleware.Idempotency(idemRepo), h.Capture)
 
 	logger.Logger.Info("server starting", "port", cfg.Port)
 	r.Run(":" + cfg.Port)

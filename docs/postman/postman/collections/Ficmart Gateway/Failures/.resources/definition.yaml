@@ -1,0 +1,6 @@
+$kind: collection
+scripts:
+  - type: http:beforeRequest
+    code: pm.variables.set('ts', Date.now());
+    language: text/javascript
+order: 2000

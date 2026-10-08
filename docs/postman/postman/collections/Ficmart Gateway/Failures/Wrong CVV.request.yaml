@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{base_url}}/payments/authorize"
+method: POST
+headers:
+  Content-Type: application/json
+  Idempotency-Key: f-cvv-{{ts}}
+body:
+  type: text
+  content: '{"order_id":"f-cvv-{{ts}}","customer_id":"c1","amount":5000,"currency":"USD","card_number":"4111111111111111","cvv":"999","expiry_month":12,"expiry_year":2030}'
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('402 CARD_DECLINED', () => {
+        pm.response.to.have.status(402);
+        pm.expect(pm.response.json().code).to.eql('CARD_DECLINED');
+      });
+    language: text/javascript
+order: 2000

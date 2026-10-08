@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/payments/{{payment_id}}/capture"
+method: POST
+headers:
+  Idempotency-Key: "{{capture_key}}"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('200 CAPTURED', () => {
+        pm.response.to.have.status(200);
+        pm.expect(pm.response.json().status).to.eql('CAPTURED');
+      });
+    language: text/javascript
+order: 4000
