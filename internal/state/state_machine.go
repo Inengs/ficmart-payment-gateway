@@ -14,17 +14,14 @@ var validTransitions = map[domain.PaymentStatus][]domain.PaymentStatus{
 }
 
 func Transition(current, next domain.PaymentStatus) error {
-	allowed, ok := validTransitions[current] // allowed = value stored in the map, ok (bool) = tells whether it was found
+    for _, s := range validTransitions[current] { // iterate over valid next states for the current state
+        if s == next { // check if the next state is valid
+            return nil // valid transition found
+        }
+    }
 
-	if !ok {
-		return domain.NewAppError(domain.ErrInvalidStateTransition, fmt.Sprintf("cannot move from %s to %s", current, next))
-	}
-
-	for _, s := range allowed {
-		if s == next { // if the expected state is found, it is a valid transition and return nil error
-			return nil
-		}
-	}
-
-	return domain.NewAppError(domain.ErrBankUnavailable, fmt.Sprintf("cannot move from %s to %s", current, next))
+    return domain.NewAppError(
+        domain.ErrInvalidStateTransition, // error type
+        fmt.Sprintf("cannot move from %s to %s", current, next), // error message
+    )
 }

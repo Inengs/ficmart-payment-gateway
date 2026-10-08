@@ -102,11 +102,7 @@ func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, r
 		return nil, err
 	}
 
-	payment.Status = domain.StatusAuthorized
-	payment.BankAuthID = &bankResp.AuthorizationID
-	payment.AuthorizedAt = &authorizedAt
-
-	return payment, nil
+	return s.repo.GetPaymentByID(payment.ID)
 }
 
 func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID string) (*domain.Payment, error) {
@@ -133,10 +129,7 @@ func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID 
 	if err := s.repo.MarkCaptured(p.ID, resp.CaptureID, capturedAt); err != nil {
 		return nil, err
 	}
-	p.Status = domain.StatusCaptured
-	p.BankCaptureID = &resp.CaptureID
-	p.CapturedAt = &capturedAt
-	return p, nil
+	return s.repo.GetPaymentByID(p.ID)
 }
 
 // Backoff and retry for transient failures. The bank is a separate system
