@@ -64,6 +64,19 @@ type VoidResponse struct {
 	VoidedAt        string `json:"voided_at"`
 }
 
+type RefundRequest struct {
+	CaptureID string `json:"capture_id"`
+	Amount    int    `json:"amount"`
+}
+
+type RefundResponse struct {
+	RefundID   string `json:"refund_id"`
+	CaptureID  string `json:"capture_id"`
+	Amount     int    `json:"amount"`
+	Status     string `json:"status"`
+	RefundedAt string `json:"refunded_at"`
+}
+
 type bankErrorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
@@ -190,6 +203,14 @@ func (b *BankClient) Capture(ctx context.Context, req *CaptureRequest, idempoten
 func (b *BankClient) Void(ctx context.Context, req *VoidRequest, key string) (*VoidResponse, error) {
 	var out VoidResponse
 	if err := b.post(ctx, "/api/v1/voids", key, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (b *BankClient) Refund(ctx context.Context, req *RefundRequest, key string) (*RefundResponse, error) {
+	var out RefundResponse
+	if err := b.post(ctx, "/api/v1/refunds", key, req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

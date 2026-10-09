@@ -40,6 +40,7 @@ func main() {
 	r.POST("/payments/authorize", middleware.Idempotency(idemRepo), h.Authorize)
 	r.POST("/payments/:id/capture", middleware.Idempotency(idemRepo), h.Capture)
 	r.POST("/payments/:id/void", middleware.Idempotency(idemRepo), h.Void)
+	r.POST("/payments/:id/refund", middleware.Idempotency(idemRepo), h.Refund)
 
 	logger.Logger.Info("server starting", "port", cfg.Port)
 	r.Run(":" + cfg.Port)

@@ -119,3 +119,18 @@ func (r *PaymentRepository) MarkVoided(paymentID, bankVoidID string, voidedAt ti
 	}
 	return nil
 }
+
+func (r *PaymentRepository) MarkRefunded(paymentID, bankRefundID string, refundedAt time.Time) error {
+	res, err := r.db.Exec(`
+		UPDATE payments
+		SET status = $1, bank_refund_id = $2, refunded_at = $3, updated_at = $4
+		WHERE id = $5 AND status = $6`,
+		domain.StatusRefunded, bankRefundID, refundedAt, time.Now(), paymentID, domain.StatusCaptured)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.NewAppError(domain.ErrInvalidStateTransition, "payment is no longer CAPTURED")
+	}
+	return nil
+}

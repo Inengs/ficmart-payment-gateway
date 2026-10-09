@@ -159,9 +159,41 @@ func (s *PaymentService) Void(ctx context.Context, idempotencyKey, paymentID str
 	updated, err := s.repo.GetPaymentByID(p.ID) // re-read the payment record from the repository to get the updated state after the void operation
 	if err != nil {
 		log.Printf("re-read after void failed for %s: %v", p.ID, err) // log the error if the payment record cannot be re-read from the repository, but do not return an error to the caller
-		return p, nil // the void did succeed
+		return p, nil                                                 // the void did succeed
 	}
 	return updated, nil // return the updated payment record to the caller, which should now be in the VOIDED state
+}
+
+func (s *PaymentService) Refund(ctx context.Context, idempotencyKey, paymentID string) (*domain.Payment, error) {
+	p, err := s.repo.GetPaymentByID(paymentID) // get the payment record from the repository using the provided payment ID
+	if err != nil {
+		return nil, err // return the error if the payment record cannot be retrieved
+	}
+	if err := state.Transition(p.Status, domain.StatusRefunded); err != nil {
+		return nil, err // return the error if the payment record cannot be transitioned to the REFUNDED state
+	}
+	if p.BankCaptureID == nil {
+		return nil, domain.NewAppError(domain.ErrInternal, "payment has no bank capture") // return an internal error if the payment record does not have a bank capture ID, which is required to refund the payment
+	}
+
+	bankKey := "refund:" + idempotencyKey // create a unique bank key for the refund operation using the provided idempotency key
+	resp, err := withRetry(ctx, func() (*client.RefundResponse, error) {
+		return s.bank.Refund(ctx, &client.RefundRequest{CaptureID: *p.BankCaptureID, Amount: p.Amount}, bankKey) // call the bank client to refund the payment using the bank capture ID and the unique bank key, with retry logic for transient failures
+	})
+	if err != nil {
+		return nil, err // stays CAPTURED; safe to retry with the same key
+	}
+
+	if err := s.repo.MarkRefunded(p.ID, resp.RefundID, time.Now()); err != nil {
+		return nil, err // return the error if the payment record cannot be marked as REFUNDED in the repository
+	}
+
+	updated, err := s.repo.GetPaymentByID(p.ID)
+	if err != nil {
+		log.Printf("re-read after refund failed for %s: %v", p.ID, err) // log the error if the payment record cannot be re-read from the repository, but do not return an error to the caller
+		return p, nil                                                   // the refund did succeed
+	}
+	return updated, nil // return the updated payment record to the caller, which should now be in the REFUNDED state
 }
 
 // Backoff and retry for transient failures. The bank is a separate system
@@ -170,43 +202,43 @@ func (s *PaymentService) Void(ctx context.Context, idempotencyKey, paymentID str
 // backoff. The bank client already returns an error for 5xx responses,
 // so we don't have to check the status code here. This is the backoff with jitter pattern recommended by AWS: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
 func withRetry[T any](ctx context.Context, call func() (T, error)) (T, error) {
-	const maxAttempts = 3
-	backoff := 200 * time.Millisecond
-	var zero T
-	var lastErr error
+	const maxAttempts = 3 // maximum number of attempts to call the bank service before giving up
+	backoff := 200 * time.Millisecond // initial backoff duration before retrying, which will be doubled after each attempt
+	var zero T // zero value of the generic type T, used to return in case of an error
+	var lastErr error // 
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		resp, err := call()
+		resp, err := call() // call the provided function to make the bank service request
 		if err == nil {
-			return resp, nil
+			return resp, nil // return the response if the call was successful
 		}
-		lastErr = err
+		lastErr = err // store the last error encountered during the call for logging and returning if all attempts fail
 
-		var appErr *domain.AppError
+		var appErr *domain.AppError // declare a variable to hold the application error returned by the bank service
 		if !errors.As(err, &appErr) || appErr.Code != domain.ErrBankUnavailable {
-			return zero, err
+			return zero, err // return the error if it is not a bank unavailable error, as we only want to retry on transient failures
 		}
 		if ctx.Err() != nil {
-			return zero, ctx.Err()
+			return zero, ctx.Err() // return the context error if the context has been canceled or timed out, as we don't want to continue retrying in that case
 		}
 		if attempt == maxAttempts {
-			break
+			break // break the loop if we have reached the maximum number of attempts, as we don't want to retry anymore
 		}
-		wait := backoff + time.Duration(rand.Int63n(int64(backoff)))
+		wait := backoff + time.Duration(rand.Int63n(int64(backoff))) // calculate the wait time before the next retry attempt, which is a random duration between the backoff and twice the backoff to add jitter and avoid thundering herd problems
 		select {
-		case <-time.After(wait):
+		case <-time.After(wait): // wait for the calculated duration before retrying the call to the bank service
 		case <-ctx.Done():
-			return zero, ctx.Err()
+			return zero, ctx.Err() // return the context error if the context has been canceled or timed out while waiting, as we don't want to continue retrying in that case
 		}
-		backoff *= 2
+		backoff *= 2 // double the backoff duration for the next retry attempt, to implement exponential backoff and reduce the load on the bank service during transient failures
 	}
-	return zero, lastErr
+	return zero, lastErr // return the last error encountered during the call if all attempts have failed, as we want to propagate the error to the caller for handling
 }
 
 func isPermanent(code domain.ErrorCode) bool {
 	switch code {
 	case domain.ErrCardDeclined, domain.ErrCardExpired,
-		domain.ErrInsufficientFunds, domain.ErrValidation:
+		domain.ErrInsufficientFunds, domain.ErrValidation: // these are permanent errors that should not be retried, as they indicate a problem with the payment request or the card itself
 		return true
 	}
 	return false
