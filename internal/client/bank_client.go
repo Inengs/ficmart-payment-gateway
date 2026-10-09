@@ -53,6 +53,17 @@ type CaptureResponse struct {
 	Status    string `json:"status"`
 }
 
+type VoidRequest struct {
+	AuthorizationID string `json:"authorization_id"`
+}
+
+type VoidResponse struct {
+	VoidID          string `json:"void_id"`
+	AuthorizationID string `json:"authorization_id"`
+	Status          string `json:"status"`
+	VoidedAt        string `json:"voided_at"`
+}
+
 type bankErrorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
@@ -78,8 +89,11 @@ func mapBankError(status int, body []byte) error {
 		return domain.WrapAppError(domain.ErrCardDeclined, "card details are invalid", raw)
 	case "invalid_amount":
 		return domain.WrapAppError(domain.ErrValidation, "invalid amount", raw)
+	case "authorization_already_used":
+		return domain.WrapAppError(domain.ErrInvalidStateTransition, "payment cannot be changed in its current state", raw) // this is a terminal state, so we don't want to retry
 	default:
 		// unknown 4xx or non-JSON body: likely our bug, so log it and don't blame the card
+		// includes authorization_not_found: the gateway only sends IDs the bank gave it,
 		return domain.WrapAppError(domain.ErrInternal, "unexpected bank response", raw)
 	}
 }
@@ -168,6 +182,14 @@ func (b *BankClient) Authorize(ctx context.Context, req *AuthorizeRequest, idemp
 func (b *BankClient) Capture(ctx context.Context, req *CaptureRequest, idempotencyKey string) (*CaptureResponse, error) {
 	var out CaptureResponse
 	if err := b.post(ctx, "/api/v1/captures", idempotencyKey, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (b *BankClient) Void(ctx context.Context, req *VoidRequest, key string) (*VoidResponse, error) {
+	var out VoidResponse
+	if err := b.post(ctx, "/api/v1/voids", key, req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

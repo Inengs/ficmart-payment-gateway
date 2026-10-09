@@ -132,6 +132,38 @@ func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID 
 	return s.repo.GetPaymentByID(p.ID)
 }
 
+func (s *PaymentService) Void(ctx context.Context, idempotencyKey, paymentID string) (*domain.Payment, error) {
+	p, err := s.repo.GetPaymentByID(paymentID) // get the payment record from the repository using the provided payment ID
+	if err != nil {
+		return nil, err // return the error if the payment record cannot be retrieved
+	}
+	if err := state.Transition(p.Status, domain.StatusVoided); err != nil {
+		return nil, err // return the error if the payment record cannot be transitioned to the VOIDED state
+	}
+	if p.BankAuthID == nil {
+		return nil, domain.NewAppError(domain.ErrInternal, "payment has no bank authorization") // return an internal error if the payment record does not have a bank authorization ID, which is required to void the payment
+	}
+
+	bankKey := "void:" + idempotencyKey // create a unique bank key for the void operation using the provided idempotency key
+	resp, err := withRetry(ctx, func() (*client.VoidResponse, error) {
+		return s.bank.Void(ctx, &client.VoidRequest{AuthorizationID: *p.BankAuthID}, bankKey) // call the bank client to void the payment using the bank authorization ID and the unique bank key, with retry logic for transient failures
+	})
+	if err != nil {
+		return nil, err // stays AUTHORIZED; safe to retry with the same key
+	}
+
+	if err := s.repo.MarkVoided(p.ID, resp.VoidID, time.Now()); err != nil {
+		return nil, err // return the error if the payment record cannot be marked as VOIDED in the repository
+	}
+
+	updated, err := s.repo.GetPaymentByID(p.ID) // re-read the payment record from the repository to get the updated state after the void operation
+	if err != nil {
+		log.Printf("re-read after void failed for %s: %v", p.ID, err) // log the error if the payment record cannot be re-read from the repository, but do not return an error to the caller
+		return p, nil // the void did succeed
+	}
+	return updated, nil // return the updated payment record to the caller, which should now be in the VOIDED state
+}
+
 // Backoff and retry for transient failures. The bank is a separate system
 // and can be down or slow. We don't want to fail the payment if the bank
 // is just having a bad moment, so we retry a few times with exponential

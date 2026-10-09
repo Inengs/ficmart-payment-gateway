@@ -104,3 +104,18 @@ func (r *PaymentRepository) MarkCaptured(paymentID, bankCaptureID string, captur
 	}
 	return nil
 }
+
+func (r *PaymentRepository) MarkVoided(paymentID, bankVoidID string, voidedAt time.Time) error {
+	res, err := r.db.Exec(`
+		UPDATE payments
+		SET status = $1, bank_void_id = $2, voided_at = $3, updated_at = $4
+		WHERE id = $5 AND status = $6`,
+		domain.StatusVoided, bankVoidID, voidedAt, time.Now(), paymentID, domain.StatusAuthorized)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.NewAppError(domain.ErrInvalidStateTransition, "payment is no longer AUTHORIZED")
+	}
+	return nil
+}
