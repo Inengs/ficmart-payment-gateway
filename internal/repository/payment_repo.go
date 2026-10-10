@@ -134,3 +134,30 @@ func (r *PaymentRepository) MarkRefunded(paymentID, bankRefundID string, refunde
 	}
 	return nil
 }
+
+// GET endpoints
+func (r *PaymentRepository) GetByOrderID(orderID string) (*domain.Payment, error) {
+	var p domain.Payment //
+	err := r.db.Get(&p, `
+		SELECT * FROM payments
+		WHERE order_id = $1
+		ORDER BY (status = 'PENDING') ASC, created_at DESC
+		LIMIT 1`, orderID) // select the particular transaction for order ID, make sure it is real values and not pending
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.NewAppError(domain.ErrPaymentNotFound, "no payment found for that order") // 
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (r *PaymentRepository) ListByCustomerID(customerID string, limit, offset int) ([]domain.Payment, error) {
+	ps := []domain.Payment{} // non-nil, so an empty result is JSON [] and not null
+	err := r.db.Select(&ps, `
+		SELECT * FROM payments
+		WHERE customer_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`, customerID, limit, offset)
+	return ps, err
+}

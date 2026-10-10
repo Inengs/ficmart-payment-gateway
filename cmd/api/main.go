@@ -41,6 +41,9 @@ func main() {
 	r.POST("/payments/:id/capture", middleware.Idempotency(idemRepo), h.Capture)
 	r.POST("/payments/:id/void", middleware.Idempotency(idemRepo), h.Void)
 	r.POST("/payments/:id/refund", middleware.Idempotency(idemRepo), h.Refund)
+	r.GET("/payments/:id", h.GetPayment)
+	r.GET("/orders/:order_id/payment", h.GetByOrder)
+	r.GET("/customers/:customer_id/payments", h.ListByCustomer)
 
 	logger.Logger.Info("server starting", "port", cfg.Port)
 	r.Run(":" + cfg.Port)

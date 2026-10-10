@@ -196,16 +196,28 @@ func (s *PaymentService) Refund(ctx context.Context, idempotencyKey, paymentID s
 	return updated, nil // return the updated payment record to the caller, which should now be in the REFUNDED state
 }
 
+func (s *PaymentService) GetPayment(id string) (*domain.Payment, error) {
+	return s.repo.GetPaymentByID(id)
+}
+
+func (s *PaymentService) GetPaymentByOrder(orderID string) (*domain.Payment, error) {
+	return s.repo.GetByOrderID(orderID)
+}
+
+func (s *PaymentService) ListCustomerPayments(customerID string, limit, offset int) ([]domain.Payment, error) {
+	return s.repo.ListByCustomerID(customerID, limit, offset)
+}
+
 // Backoff and retry for transient failures. The bank is a separate system
 // and can be down or slow. We don't want to fail the payment if the bank
 // is just having a bad moment, so we retry a few times with exponential
 // backoff. The bank client already returns an error for 5xx responses,
 // so we don't have to check the status code here. This is the backoff with jitter pattern recommended by AWS: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
 func withRetry[T any](ctx context.Context, call func() (T, error)) (T, error) {
-	const maxAttempts = 3 // maximum number of attempts to call the bank service before giving up
+	const maxAttempts = 3             // maximum number of attempts to call the bank service before giving up
 	backoff := 200 * time.Millisecond // initial backoff duration before retrying, which will be doubled after each attempt
-	var zero T // zero value of the generic type T, used to return in case of an error
-	var lastErr error // 
+	var zero T                        // zero value of the generic type T, used to return in case of an error
+	var lastErr error                 //
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		resp, err := call() // call the provided function to make the bank service request

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,4 +174,42 @@ func respondError(c *gin.Context, err error) {
 	}
 	log.Printf("unexpected error: %v", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"code": domain.ErrInternal, "message": "internal error"})
+}
+
+func (h *PaymentHandler) GetPayment(c *gin.Context) {
+	payment, err := h.service.GetPayment(c.Param("id"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, payment)
+}
+
+func (h *PaymentHandler) GetByOrder(c *gin.Context) {
+	payment, err := h.service.GetPaymentByOrder(c.Param("order_id"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, payment)
+}
+
+func (h *PaymentHandler) ListByCustomer(c *gin.Context) {
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if err != nil || limit < 1 || limit > 100 {
+		respondError(c, domain.NewAppError(domain.ErrValidation, "limit must be between 1 and 100"))
+		return
+	}
+	offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		respondError(c, domain.NewAppError(domain.ErrValidation, "offset must be 0 or greater"))
+		return
+	}
+
+	payments, err := h.service.ListCustomerPayments(c.Param("customer_id"), limit, offset)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, payments)
 }

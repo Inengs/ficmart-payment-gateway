@@ -73,6 +73,7 @@ type RefundResponse struct {
 	RefundID   string `json:"refund_id"`
 	CaptureID  string `json:"capture_id"`
 	Amount     int    `json:"amount"`
+	Currency   string `json:"currency"`
 	Status     string `json:"status"`
 	RefundedAt string `json:"refunded_at"`
 }
@@ -102,7 +103,7 @@ func mapBankError(status int, body []byte) error {
 		return domain.WrapAppError(domain.ErrCardDeclined, "card details are invalid", raw)
 	case "invalid_amount":
 		return domain.WrapAppError(domain.ErrValidation, "invalid amount", raw)
-	case "authorization_already_used":
+	case "authorization_already_used", "already_refunded":
 		return domain.WrapAppError(domain.ErrInvalidStateTransition, "payment cannot be changed in its current state", raw) // this is a terminal state, so we don't want to retry
 	default:
 		// unknown 4xx or non-JSON body: likely our bug, so log it and don't blame the card
