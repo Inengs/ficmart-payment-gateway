@@ -105,7 +105,7 @@ func (s *PaymentService) Authorize(ctx context.Context, idempotencyKey string, r
 	return s.repo.GetPaymentByID(payment.ID)
 }
 
-func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID string) (*domain.Payment, error) {
+func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID string, amount *int) (*domain.Payment, error) {
 	p, err := s.repo.GetPaymentByID(paymentID)
 	if err != nil {
 		return nil, err
@@ -117,16 +117,22 @@ func (s *PaymentService) Capture(ctx context.Context, idempotencyKey, paymentID 
 		return nil, domain.NewAppError(domain.ErrInternal, "payment has no bank authorization")
 	}
 
-	bankKey := "capture:" + idempotencyKey
-	resp, err := withRetry(ctx, func() (*client.CaptureResponse, error) {
-		return s.bank.Capture(ctx, &client.CaptureRequest{AuthorizationID: *p.BankAuthID, Amount: p.Amount}, bankKey)
-	})
-	if err != nil {
-		return nil, err // payment stays AUTHORIZED; safe to retry with the same key
+	amt := p.Amount // default: capture the full authorized amount
+	if amount != nil {
+		amt = *amount
+	}
+	if amt <= 0 || amt > p.Amount {
+		return nil, domain.NewAppError(domain.ErrValidation, "capture amount must be between 1 and the authorized amount")
 	}
 
-	capturedAt := time.Now()
-	if err := s.repo.MarkCaptured(p.ID, resp.CaptureID, capturedAt); err != nil {
+	bankKey := "capture:" + idempotencyKey
+	resp, err := withRetry(ctx, func() (*client.CaptureResponse, error) {
+		return s.bank.Capture(ctx, &client.CaptureRequest{AuthorizationID: *p.BankAuthID, Amount: amt}, bankKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.MarkCaptured(p.ID, resp.CaptureID, amt, time.Now()); err != nil {
 		return nil, err
 	}
 	return s.repo.GetPaymentByID(p.ID)
@@ -164,7 +170,7 @@ func (s *PaymentService) Void(ctx context.Context, idempotencyKey, paymentID str
 	return updated, nil // return the updated payment record to the caller, which should now be in the VOIDED state
 }
 
-func (s *PaymentService) Refund(ctx context.Context, idempotencyKey, paymentID string) (*domain.Payment, error) {
+func (s *PaymentService) Refund(ctx context.Context, idempotencyKey, paymentID string, amount *int) (*domain.Payment, error) {
 	p, err := s.repo.GetPaymentByID(paymentID) // get the payment record from the repository using the provided payment ID
 	if err != nil {
 		return nil, err // return the error if the payment record cannot be retrieved
@@ -172,19 +178,29 @@ func (s *PaymentService) Refund(ctx context.Context, idempotencyKey, paymentID s
 	if err := state.Transition(p.Status, domain.StatusRefunded); err != nil {
 		return nil, err // return the error if the payment record cannot be transitioned to the REFUNDED state
 	}
+
+	refundable := p.CapturedAmount - p.RefundedAmount
+	amt := refundable // default: refund everything still refundable
+	if amount != nil {
+		amt = *amount
+	}
+	if amt <= 0 || amt > refundable {
+		return nil, domain.NewAppError(domain.ErrValidation, "refund amount must be between 1 and the refundable amount")
+	}
+
 	if p.BankCaptureID == nil {
 		return nil, domain.NewAppError(domain.ErrInternal, "payment has no bank capture") // return an internal error if the payment record does not have a bank capture ID, which is required to refund the payment
 	}
 
 	bankKey := "refund:" + idempotencyKey // create a unique bank key for the refund operation using the provided idempotency key
 	resp, err := withRetry(ctx, func() (*client.RefundResponse, error) {
-		return s.bank.Refund(ctx, &client.RefundRequest{CaptureID: *p.BankCaptureID, Amount: p.Amount}, bankKey) // call the bank client to refund the payment using the bank capture ID and the unique bank key, with retry logic for transient failures
+		return s.bank.Refund(ctx, &client.RefundRequest{CaptureID: *p.BankCaptureID, Amount: amt}, bankKey) // call the bank client to refund the payment using the bank capture ID and the unique bank key, with retry logic for transient failures
 	})
 	if err != nil {
 		return nil, err // stays CAPTURED; safe to retry with the same key
 	}
 
-	if err := s.repo.MarkRefunded(p.ID, resp.RefundID, time.Now()); err != nil {
+	if err := s.repo.MarkRefunded(p.ID, resp.RefundID, amt, time.Now()); err != nil {
 		return nil, err // return the error if the payment record cannot be marked as REFUNDED in the repository
 	}
 

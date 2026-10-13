@@ -90,12 +90,12 @@ func (r *PaymentRepository) GetPaymentByID(paymentID string) (*domain.Payment, e
 	return &p, nil
 }
 
-func (r *PaymentRepository) MarkCaptured(paymentID, bankCaptureID string, capturedAt time.Time) error {
+func (r *PaymentRepository) MarkCaptured(paymentID, bankCaptureID string, amount int, capturedAt time.Time) error {
 	res, err := r.db.Exec(`
 		UPDATE payments
-		SET status = $1, bank_capture_id = $2, captured_at = $3, updated_at = $4
-		WHERE id = $5 AND status = $6`,
-		domain.StatusCaptured, bankCaptureID, capturedAt, time.Now(), paymentID, domain.StatusAuthorized)
+		SET status = $1, bank_capture_id = $2, captured_at = $3, captured_amount = $4, updated_at = $5
+		WHERE id = $6 AND status = $7 AND $4 > 0 AND $4 <= amount`,
+		domain.StatusCaptured, bankCaptureID, capturedAt, amount, time.Now(), paymentID, domain.StatusAuthorized)
 	if err != nil {
 		return err
 	}
@@ -120,17 +120,19 @@ func (r *PaymentRepository) MarkVoided(paymentID, bankVoidID string, voidedAt ti
 	return nil
 }
 
-func (r *PaymentRepository) MarkRefunded(paymentID, bankRefundID string, refundedAt time.Time) error {
+func (r *PaymentRepository) MarkRefunded(paymentID, bankRefundID string, amount int, refundedAt time.Time) error {
 	res, err := r.db.Exec(`
 		UPDATE payments
-		SET status = $1, bank_refund_id = $2, refunded_at = $3, updated_at = $4
-		WHERE id = $5 AND status = $6`,
-		domain.StatusRefunded, bankRefundID, refundedAt, time.Now(), paymentID, domain.StatusCaptured)
+		SET refunded_amount = refunded_amount + $1,
+		    status = CASE WHEN refunded_amount + $1 = captured_amount THEN $2 ELSE status END,
+		    bank_refund_id = $3, refunded_at = $4, updated_at = $5
+		WHERE id = $6 AND status = $7 AND $1 > 0 AND refunded_amount + $1 <= captured_amount`,
+		amount, domain.StatusRefunded, bankRefundID, refundedAt, time.Now(), paymentID, domain.StatusCaptured)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return domain.NewAppError(domain.ErrInvalidStateTransition, "payment is no longer CAPTURED")
+		return domain.NewAppError(domain.ErrInvalidStateTransition, "payment is not CAPTURED or refund exceeds the refundable amount")
 	}
 	return nil
 }
@@ -144,7 +146,7 @@ func (r *PaymentRepository) GetByOrderID(orderID string) (*domain.Payment, error
 		ORDER BY (status = 'PENDING') ASC, created_at DESC
 		LIMIT 1`, orderID) // select the particular transaction for order ID, make sure it is real values and not pending
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, domain.NewAppError(domain.ErrPaymentNotFound, "no payment found for that order") // 
+		return nil, domain.NewAppError(domain.ErrPaymentNotFound, "no payment found for that order") //
 	}
 	if err != nil {
 		return nil, err

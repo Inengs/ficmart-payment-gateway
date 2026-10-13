@@ -105,6 +105,8 @@ func mapBankError(status int, body []byte) error {
 		return domain.WrapAppError(domain.ErrValidation, "invalid amount", raw)
 	case "authorization_already_used", "already_refunded":
 		return domain.WrapAppError(domain.ErrInvalidStateTransition, "payment cannot be changed in its current state", raw) // this is a terminal state, so we don't want to retry
+	case "amount_mismatch":
+		return domain.NewAppError(domain.ErrValidation, "bank only supports full-amount capture and refund")
 	default:
 		// unknown 4xx or non-JSON body: likely our bug, so log it and don't blame the card
 		// includes authorization_not_found: the gateway only sends IDs the bank gave it,

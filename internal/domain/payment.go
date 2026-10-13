@@ -29,25 +29,27 @@ const (
 )
 
 type Payment struct {
-	ID            string        `db:"id" json:"payment_id"`
-	OrderID       string        `db:"order_id" json:"order_id"`
-	CustomerID    string        `db:"customer_id" json:"customer_id"`
-	Amount        int           `db:"amount" json:"amount"`
-	Currency      string        `db:"currency" json:"currency"`
-	Status        PaymentStatus `db:"status" json:"status"`
-	CardLastFour  string        `db:"card_last_four" json:"card_last_four"`
-	BankAuthID    *string       `db:"bank_auth_id" json:"bank_auth_id"`
-	BankCaptureID *string       `db:"bank_capture_id" json:"bank_capture_id"`
-	BankVoidID    *string       `db:"bank_void_id" json:"bank_void_id"`
-	BankRefundID  *string       `db:"bank_refund_id" json:"bank_refund_id"`
-	AuthorizedAt  *time.Time    `db:"authorized_at" json:"authorized_at"`
-	CapturedAt    *time.Time    `db:"captured_at" json:"captured_at"`
-	VoidedAt      *time.Time    `db:"voided_at" json:"voided_at"`
-	RefundedAt    *time.Time    `db:"refunded_at" json:"refunded_at"`
-	CreatedAt     time.Time     `db:"created_at" json:"created_at"`
-	UpdatedAt     time.Time     `db:"updated_at" json:"updated_at"`
-	FailureReason *string    `db:"failure_reason" json:"failure_reason"`
-	FailedAt      *time.Time `db:"failed_at" json:"failed_at"`
+	ID             string        `db:"id" json:"payment_id"`
+	OrderID        string        `db:"order_id" json:"order_id"`
+	CustomerID     string        `db:"customer_id" json:"customer_id"`
+	Amount         int           `db:"amount" json:"amount"`
+	CapturedAmount int           `db:"captured_amount" json:"captured_amount"`
+	RefundedAmount int           `db:"refunded_amount" json:"refunded_amount"`
+	Currency       string        `db:"currency" json:"currency"`
+	Status         PaymentStatus `db:"status" json:"status"`
+	CardLastFour   string        `db:"card_last_four" json:"card_last_four"`
+	BankAuthID     *string       `db:"bank_auth_id" json:"bank_auth_id"`
+	BankCaptureID  *string       `db:"bank_capture_id" json:"bank_capture_id"`
+	BankVoidID     *string       `db:"bank_void_id" json:"bank_void_id"`
+	BankRefundID   *string       `db:"bank_refund_id" json:"bank_refund_id"`
+	AuthorizedAt   *time.Time    `db:"authorized_at" json:"authorized_at"`
+	CapturedAt     *time.Time    `db:"captured_at" json:"captured_at"`
+	VoidedAt       *time.Time    `db:"voided_at" json:"voided_at"`
+	RefundedAt     *time.Time    `db:"refunded_at" json:"refunded_at"`
+	CreatedAt      time.Time     `db:"created_at" json:"created_at"`
+	UpdatedAt      time.Time     `db:"updated_at" json:"updated_at"`
+	FailureReason  *string       `db:"failure_reason" json:"failure_reason"`
+	FailedAt       *time.Time    `db:"failed_at" json:"failed_at"`
 }
 
 // this is a custom error type that includes an error code and an optional underlying cause, the error code is used to categorize the error and can be used for programmatic handling of errors, while the underlying cause can be used for debugging and logging purposes

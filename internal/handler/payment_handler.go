@@ -3,6 +3,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -56,7 +57,12 @@ func (h *PaymentHandler) Authorize(c *gin.Context) {
 
 func (h *PaymentHandler) Capture(c *gin.Context) {
 	key := c.GetString("idempotency_key")
-	payment, err := h.service.Capture(c.Request.Context(), key, c.Param("id"))
+	amount, err := bindOptionalAmount(c)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	payment, err := h.service.Capture(c.Request.Context(), key, c.Param("id"), amount)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -76,7 +82,12 @@ func (h *PaymentHandler) Void(c *gin.Context) {
 
 func (h *PaymentHandler) Refund(c *gin.Context) {
 	key := c.GetString("idempotency_key")
-	payment, err := h.service.Refund(c.Request.Context(), key, c.Param("id"))
+	amount, err := bindOptionalAmount(c)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	payment, err := h.service.Refund(c.Request.Context(), key, c.Param("id"), amount)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -113,6 +124,13 @@ func validateAuthorize(req *service.AuthorizeRequest) error {
 	}
 	if req.Currency != "USD" {
 		return domain.NewAppError(domain.ErrValidation, "only USD is supported")
+	}
+
+	if !domain.IsKnownCurrency(req.Currency) {
+		return domain.NewAppError(domain.ErrValidation, "unknown currency code")
+	}
+	if !domain.IsSupportedCurrency(req.Currency) {
+		return domain.NewAppError(domain.ErrValidation, req.Currency+" is not supported by the upstream bank")
 	}
 
 	// card format (the bank does the Luhn check)
@@ -212,4 +230,15 @@ func (h *PaymentHandler) ListByCustomer(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, payments)
+}
+
+// bindOptionalAmount reads an optional {"amount": N} body. An empty body is fine and returns nil.
+func bindOptionalAmount(c *gin.Context) (*int, error) {
+	var body struct {
+		Amount *int `json:"amount"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
+		return nil, domain.NewAppError(domain.ErrValidation, "invalid JSON body")
+	}
+	return body.Amount, nil
 }
