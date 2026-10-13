@@ -122,9 +122,6 @@ func validateAuthorize(req *service.AuthorizeRequest) error {
 	if req.Currency == "" {
 		req.Currency = "USD"
 	}
-	if req.Currency != "USD" {
-		return domain.NewAppError(domain.ErrValidation, "only USD is supported")
-	}
 
 	if !domain.IsKnownCurrency(req.Currency) {
 		return domain.NewAppError(domain.ErrValidation, "unknown currency code")
